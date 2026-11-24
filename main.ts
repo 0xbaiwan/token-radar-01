@@ -1,14 +1,20 @@
-// A working token-radar-01 entry (Node 22, standard library only).
+// Token Radar radar-2 — a token-radar-01 entry (Node 22, standard library only).
 //
 // The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the model in lib/model.ts, writes the ranked board to /output/board.json, and
-// copies this repository's dashboard/ and screenshots/ to /output. Last, it writes /output/dossier.json,
-// the summary the judge reads, with the vendored make.fun library.
+// pre-token protocol with the calibrated model in lib/model.ts, writes the ranked board to
+// /output/board.json, and copies this repository's dashboard/ and screenshots/ to /output. Last, it
+// writes /output/dossier.json, the summary the judge reads, with the vendored make.fun library.
+//
+// radar-2's model is fitted, not assumed: each category's base multiple is the median mcap/TVL of the
+// snapshot's own live-token protocols in that category, shrunk in log space toward the global median;
+// a size factor pays less per TVL dollar as protocols grow (the market's own sublinearity); growth is
+// dampened and maturity saturates at two years; multi-chain protocols earn a distribution bonus.
+// No protocol name is ever special-cased.
 //
 // The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
-// and dashboard/app.js read /output/data.js, which this program writes from the same board. A starting
-// point, not a winner: it covers the watchlist, states the model and gives every protocol a farm plan.
-// Change the model, the page or the plan; keep the gate's shape.
+// and dashboard/app.js read /output/data.js, which this program writes from the same board. It shows
+// the ranked board, a detail view for every protocol (all five multipliers, recomputed in the page),
+// filters by category, chain and size, and the full calibration table behind the model.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -16,7 +22,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { MODEL_VERSION, boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -32,6 +38,13 @@ function arg(name: string, fallback: string): string {
   if (at >= 0 && at + 1 < process.argv.length) return process.argv[at + 1]!;
   const withEquals = process.argv.find((a) => a.startsWith(`--${name}=`));
   return withEquals === undefined ? fallback : withEquals.slice(name.length + 3);
+}
+
+/** Whole dollars as $1.2B / $345.6M / $12,345. */
+function money(n: number): string {
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  return `$${n.toLocaleString('en-US')}`;
 }
 
 const inputArg = arg('input', '/input');
@@ -85,7 +98,10 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+const totalImplied = board.reduce((sum, r) => sum + r.implied_value_usd, 0);
+const top = board[0]!;
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+  `token radar [${MODEL_VERSION}]: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
+    `token radar [${MODEL_VERSION}]: total implied ${money(totalImplied)}, top #1 ${top.name} at ${money(top.implied_value_usd)}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
